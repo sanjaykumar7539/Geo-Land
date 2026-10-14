@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # vinext-starter
 
 A clean full-stack starter running on [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and Drizzle support.
@@ -143,3 +144,6 @@ Change the argument to your desired count. The current UI has preset counts thro
 
 Verify packaged data: `node scripts/verify-large.mjs`.
 No government records or real parcel photos were added. Generated ownership, conflict and verification attributes are demonstrations only. No maximum hardware capacity has been benchmarked.
+=======
+# Geo-Land
+>>>>>>> 3e1af122e6028223fd902ceeaf8bd39ac431ec9e
