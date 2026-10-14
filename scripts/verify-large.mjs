@@ -1,0 +1,4 @@
+import {readFile} from 'node:fs/promises';import assert from 'node:assert/strict';
+const m=JSON.parse(await readFile('public/data/manifest.json','utf8'));let n=0;const ids=new Set();
+for(const shard of m.shards){const d=JSON.parse(await readFile(`public/data/${shard.file}`,'utf8'));assert.equal(d.features.length,shard.count);for(const f of d.features){assert(!ids.has(f.id));ids.add(f.id);assert.equal(f.geometry.type,'Polygon');const ring=f.geometry.coordinates[0];assert.deepEqual(ring[0],ring.at(-1));for(const [lon,lat] of ring){assert(lon>=-180&&lon<=180&&lat>=-85&&lat<=85)}assert(['verified','review','conflict'].includes(f.properties.status));assert(f.properties.areaSqFt>0);n++}}
+assert.equal(n,m.recordCount);console.log(`PASS: ${n.toLocaleString()} unique parcels; ${m.shards.length} shards; closed valid-coordinate polygons; statuses; areas`);
