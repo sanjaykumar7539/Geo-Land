@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, Bell, Bot, Check, ChevronLeft, ChevronRight,
   CircleDot, Database, Download, FileCheck2, FileClock, FileUp, Fingerprint,
-  Gauge, Grid3X3, Layers3, ListFilter, Map, MapPin, Menu, RefreshCw, ScanLine, Search,
-  ShieldCheck, SlidersHorizontal, UploadCloud, UserRoundCheck, X, ZoomIn, ZoomOut
+  Gauge, Grid3X3, Layers3, ListFilter, Map, Menu, RefreshCw, ScanLine, Search,
+  ShieldCheck, SlidersHorizontal, UploadCloud, UserRoundCheck, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -17,7 +17,7 @@ import LiveParcelMap from "@/components/live-parcel-map";
 
 type Status="verified"|"review"|"conflict";
 type Risk="low"|"medium"|"high"|"critical";
-type Parcel={boundary?:number[][];images?:string[];parcelId:string;survey:string;owner:string;ward:number;zone:string;areaSqFt:number;status:Status;confidence:number;source:string;issue:string;risk:Risk;lastUpdated:string;ulPin:string;taxStatus:string};
+type Parcel={boundary?:number[][];images?:string[];parcelId:string;survey:string;owner:string;ward:number;zone:string;district?:string;areaSqFt:number;status:Status;confidence:number;source:string;issue:string;risk:Risk;lastUpdated:string;ulPin:string;taxStatus:string};
 type Feature={id:string;properties:Parcel;geometry:{type:"Polygon";coordinates:number[][][]}};
 type GeoCollection={type:"FeatureCollection";metadata:{recordCount:number;purpose:string;region:string};features:Feature[]};
 type View="command"|"map"|"review"|"registry"|"ingestion"|"audit";
@@ -26,26 +26,45 @@ const fallback:Parcel[]=[{parcelId:"TN-CBE-00001",survey:"120/1A",owner:"Arun R"
 const statusMeta={verified:{label:"Verified",color:"#3dd598"},review:{label:"Needs review",color:"#f7b955"},conflict:{label:"Conflict",color:"#ff6b6b"}};
 const nav:[View,React.ComponentType<{size?:number}>,string][]=[["command",Gauge,"Command center"],["map",Map,"Spatial workspace"],["review",UserRoundCheck,"Review queue"],["registry",Database,"Parcel registry"],["ingestion",UploadCloud,"Data ingestion"],["audit",ShieldCheck,"Audit & lineage"]];
 const trend=[{d:"08 Oct",processed:480,conflicts:38},{d:"09 Oct",processed:680,conflicts:54},{d:"10 Oct",processed:920,conflicts:71},{d:"11 Oct",processed:1160,conflicts:92},{d:"12 Oct",processed:1540,conflicts:112},{d:"13 Oct",processed:2080,conflicts:147},{d:"14 Oct",processed:2410,conflicts:169}];
+const tamilNaduDistricts=[
+  ["Ariyalur",79.08,11.14],["Chengalpattu",79.98,12.68],["Chennai",80.27,13.08],["Coimbatore",76.96,11.02],["Cuddalore",79.77,11.75],["Dharmapuri",78.16,12.13],["Dindigul",77.98,10.36],["Erode",77.72,11.34],["Kallakurichi",78.96,11.74],["Kancheepuram",79.70,12.83],["Kanniyakumari",77.54,8.18],["Karur",78.08,10.96],["Krishnagiri",78.21,12.52],["Madurai",78.12,9.93],["Mayiladuthurai",79.65,11.10],["Nagapattinam",79.84,10.77],["Namakkal",78.17,11.22],["Nilgiris",76.70,11.41],["Perambalur",78.88,11.23],["Pudukkottai",78.82,10.38],["Ramanathapuram",78.84,9.37],["Ranipet",79.33,12.93],["Salem",78.15,11.66],["Sivaganga",78.49,9.85],["Tenkasi",77.32,8.96],["Thanjavur",79.14,10.79],["Theni",77.48,10.01],["Thoothukudi",78.13,8.76],["Tiruchirappalli",78.69,10.79],["Tirunelveli",77.70,8.73],["Tirupathur",78.57,12.50],["Tiruppur",77.34,11.11],["Tiruvallur",79.91,13.14],["Tiruvannamalai",79.07,12.23],["Tiruvarur",79.63,10.77],["Vellore",79.13,12.92],["Viluppuram",79.49,11.94],["Virudhunagar",77.96,9.59]
+] as const;
+
+function statewideParcel(feature:Feature){
+  const raw=feature.properties,index=Math.max(0,Number(raw.parcelId.match(/(\d+)$/)?.[1]??1)-1);
+  const district=tamilNaduDistricts[index%tamilNaduDistricts.length];
+  const local=Math.floor(index/tamilNaduDistricts.length),row=Math.floor(local/100)%100,col=local%100,cycle=Math.floor(local/10000);
+  const lon=district[1]-0.067+col*0.00135+(row%2)*0.00012+cycle*0.00001,lat=district[2]-0.059+row*0.00118+cycle*0.00001;
+  const source=feature.geometry.coordinates[0],width=Math.abs((source[1]?.[0]??lon+0.001)-(source[0]?.[0]??lon)),height=Math.abs((source[2]?.[1]??lat+0.001)-(source[1]?.[1]??lat));
+  const boundary=[[lon,lat],[lon+width,lat],[lon+width,lat+height],[lon,lat+height],[lon,lat]];
+  const code=district[0].slice(0,3).toUpperCase();
+  return {...raw,district:district[0],parcelId:`TN-${code}-${String(index+1).padStart(6,"0")}`,boundary};
+}
 
 export default function Home(){
-  const[view,setView]=useState<View>("command"),[records,setRecords]=useState<Parcel[]>(fallback),[loading,setLoading]=useState(true),[selected,setSelected]=useState<Parcel|null>(null),[query,setQuery]=useState(""),[status,setStatus]=useState<"all"|Status>("all"),[ward,setWard]=useState("all"),[risk,setRisk]=useState("all"),[page,setPage]=useState(1),[layers,setLayers]=useState(false),[upload,setUpload]=useState(false),[toast,setToast]=useState(""),[zoom,setZoom]=useState(1),[live,setLive]=useState(true);const fileRef=useRef<HTMLInputElement>(null);
-  const [datasetCount,setDatasetCount]=useState(100000),[loadedCount,setLoadedCount]=useState(0);
-  useEffect(()=>{let cancelled=false;setLoading(true);setLoadedCount(0);setSelected(null);setPage(1);
-    async function load(){try{const manifest=await fetch("/data/manifest.json").then(r=>{if(!r.ok)throw new Error("Manifest unavailable");return r.json()}) as {shards:{file:string;count:number}[]};const all:Parcel[]=[];
-      for(const shard of manifest.shards){if(cancelled||all.length>=datasetCount)break;const d=await fetch(`/data/${shard.file}`).then(r=>{if(!r.ok)throw new Error("Dataset unavailable");return r.json()}) as GeoCollection;all.push(...d.features.map(f=>({...f.properties,boundary:f.geometry.coordinates[0]})));if(!cancelled)setLoadedCount(all.length)}
+  const[view,setView]=useState<View>("command"),[records,setRecords]=useState<Parcel[]>(fallback),[loading,setLoading]=useState(true),[selected,setSelected]=useState<Parcel|null>(null),[query,setQuery]=useState(""),[status,setStatus]=useState<"all"|Status>("all"),[ward,setWard]=useState("all"),[risk,setRisk]=useState("all"),[page,setPage]=useState(1),[layers,setLayers]=useState(false),[upload,setUpload]=useState(false),[toast,setToast]=useState(""),[live,setLive]=useState(true);const fileRef=useRef<HTMLInputElement>(null);
+  const [datasetCount,setDatasetCount]=useState(10000),[loadedCount,setLoadedCount]=useState(0),[loadError,setLoadError]=useState(""),[reloadKey,setReloadKey]=useState(0);
+  useEffect(()=>{let cancelled=false;
+    const controller=new AbortController();
+    async function load(){try{const manifest=await fetch("/data/manifest.json",{signal:controller.signal}).then(r=>{if(!r.ok)throw new Error("Manifest unavailable");return r.json()}) as {shards:{file:string;count:number}[]};const all:Parcel[]=[];
+      for(const shard of manifest.shards){if(cancelled||all.length>=datasetCount)break;const d=await fetch(`/data/${shard.file}`,{signal:controller.signal}).then(r=>{if(!r.ok)throw new Error("Dataset unavailable");return r.json()}) as GeoCollection;all.push(...d.features.map(statewideParcel));if(!cancelled)setLoadedCount(Math.min(all.length,datasetCount));await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()))}
       if(!cancelled){setRecords(all.slice(0,datasetCount));setLoading(false)}
-    }catch{if(!cancelled){setLoading(false);setToast("Dataset loading failed. Check public/data files.")}}}load();return()=>{cancelled=true};},[datasetCount]);
+    }catch(error){if(!cancelled&&!(error instanceof DOMException&&error.name==="AbortError")){setLoading(false);setLoadError("Could not load the parcel dataset. Check the data files and try again.")}}}load();return()=>{cancelled=true;controller.abort()};},[datasetCount,reloadKey]);
 
-  const filtered=useMemo(()=>records.filter(p=>(status==="all"||p.status===status)&&(ward==="all"||String(p.ward)===ward)&&(risk==="all"||p.risk===risk)&&`${p.parcelId} ${p.survey} ${p.owner} ${p.ulPin}`.toLowerCase().includes(query.toLowerCase())),[records,status,ward,risk,query]);
-  const stats=useMemo(()=>{const out={verified:0,review:0,conflict:0,critical:0,avg:0};let sum=0;for(const p of records){out[p.status]++;if(p.risk==="critical")out.critical++;sum+=p.confidence}out.avg=Math.round(sum/Math.max(records.length,1));return out},[records]);
-  const wardData=useMemo(()=>Array.from({length:10},(_,i)=>({ward:`W${i+1}`,parcels:records.filter(p=>p.ward===i+1).length,alerts:records.filter(p=>p.ward===i+1&&p.status==="conflict").length})),[records]);
+  const deferredQuery=useDeferredValue(query),normalizedQuery=deferredQuery.trim().toLocaleLowerCase();
+  const filtered=useMemo(()=>records.filter(p=>(status==="all"||p.status===status)&&(ward==="all"||String(p.ward)===ward)&&(risk==="all"||p.risk===risk)&&(!normalizedQuery||`${p.parcelId} ${p.survey} ${p.owner} ${p.ulPin} ${p.district??""}`.toLocaleLowerCase().includes(normalizedQuery))),[records,status,ward,risk,normalizedQuery]);
+  const {stats,wardData}=useMemo(()=>{const stats={verified:0,review:0,conflict:0,critical:0,avg:0};const wards=Array.from({length:10},(_,i)=>({ward:`W${i+1}`,parcels:0,alerts:0}));let sum=0;for(const p of records){stats[p.status]++;if(p.risk==="critical")stats.critical++;sum+=p.confidence;if(p.ward<=10){const item=wards[p.ward-1];item.parcels++;if(p.status==="conflict")item.alerts++}}stats.avg=Math.round(sum/Math.max(records.length,1));return{stats,wardData:wards}},[records]);
   const pageRows=filtered.slice((page-1)*25,page*25),pages=Math.max(1,Math.ceil(filtered.length/25));
+  const recordsById=useMemo(()=>new globalThis.Map(records.map(record=>[record.parcelId,record])),[records]);
+  const selectMapParcel=useCallback((parcel:{parcelId:string})=>setSelected(recordsById.get(parcel.parcelId)??null),[recordsById]);
+  const changeDataset=(count:number)=>{setLoading(true);setLoadedCount(0);setLoadError("");setSelected(null);setPage(1);setDatasetCount(count)};
+  const retryDataset=()=>{setLoading(true);setLoadedCount(0);setLoadError("");setReloadKey(x=>x+1)};
   const flash=(m:string)=>{setToast(m);setTimeout(()=>setToast(""),3200)};
   function approve(p:Parcel){setRecords(x=>x.map(v=>v.parcelId===p.parcelId?{...v,status:"verified",risk:"low",confidence:Math.max(92,v.confidence),issue:"None"}:v));setSelected({...p,status:"verified",risk:"low",confidence:Math.max(92,p.confidence),issue:"None"});flash(`${p.survey} verified. Immutable audit event created.`)}
   function exportCSV(){const rows=["parcel_id,survey,owner,ward,status,risk,confidence,area_sq_ft",...filtered.map(p=>[p.parcelId,p.survey,p.owner,p.ward,p.status,p.risk,p.confidence,p.areaSqFt].join(","))];const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([rows.join("\n")],{type:"text/csv"}));a.download="filtered-parcels.csv";a.click();URL.revokeObjectURL(a.href);flash(`${filtered.length.toLocaleString()} records exported.`)}
   async function handleFile(file?:File){if(!file)return;try{const data=JSON.parse(await file.text());if(data.type!=="FeatureCollection"||!Array.isArray(data.features))throw new Error();setUpload(false);flash(`${data.features.length.toLocaleString()} features validated and staged for harmonization.`)}catch{flash("Invalid file. Upload a valid GeoJSON FeatureCollection.")}}
   const reset=()=>{setQuery("");setStatus("all");setWard("all");setRisk("all");setPage(1)};
-  return <main className="product-shell"><div className="dataset-picker"><label>Demo dataset <select disabled={loading} value={datasetCount} onChange={e=>setDatasetCount(Number(e.target.value))}><option value={10000}>10,000 parcels</option><option value={100000}>100,000 parcels</option><option value={1000000}>1,000,000 parcels (high memory)</option></select></label><span>{loading?`Loading ${loadedCount.toLocaleString()} / ${datasetCount.toLocaleString()}`:`${records.length.toLocaleString()} loaded · Synthetic data`}</span></div>
+  return <main className="product-shell"><div className="dataset-picker" role="status" aria-live="polite"><label>Demo dataset <select disabled={loading} value={datasetCount} onChange={e=>changeDataset(Number(e.target.value))}><option value={10000}>10,000 parcels · Fast</option><option value={100000}>100,000 parcels · Standard</option><option value={1000000}>1,000,000 parcels · High memory</option></select></label><span>{loading?`Loading ${loadedCount.toLocaleString()} / ${datasetCount.toLocaleString()}…`:loadError?<><b>{loadError}</b><button onClick={retryDataset}>Retry</button></>:`${records.length.toLocaleString()} loaded · Synthetic data`}</span></div>
     <aside className="rail">
       <div className="logo"><span><Layers3 size={20}/></span><div><b>BHUMI<span>•</span>IQ</b><small>LAND INTELLIGENCE</small></div></div>
       <nav>{nav.map(([id,Icon,label])=><button key={id} className={view===id?"active":""} onClick={()=>setView(id)}><Icon size={18}/><span>{label}</span>{id==="review"&&<i>{(stats.review+stats.conflict).toLocaleString()}</i>}</button>)}</nav>
@@ -54,11 +73,11 @@ export default function Home(){
     </aside>
 
     <section className="main-stage">
-      <header className="topbar"><button className="mobile"><Menu/></button><div><small>COIMBATORE URBAN LAND MISSION</small><h1>{nav.find(n=>n[0]===view)?.[2]}</h1></div><label className="global-search"><Search size={17}/><input value={query} onChange={e=>{setQuery(e.target.value);setPage(1)}} placeholder="Search survey, owner, ULPIN or parcel ID"/><kbd>⌘K</kbd></label><div className="header-actions"><button title="Notifications"><Bell size={18}/><i>7</i></button><Button onClick={()=>setUpload(true)}><FileUp size={16}/>Ingest source</Button></div></header>
+      <header className="topbar"><button className="mobile"><Menu/></button><div><small>TAMIL NADU LAND MISSION</small><h1>{nav.find(n=>n[0]===view)?.[2]}</h1></div><label className="global-search"><Search size={17}/><input value={query} onChange={e=>{setQuery(e.target.value);setPage(1)}} placeholder="Search district, survey, owner, ULPIN or parcel ID"/><kbd>⌘K</kbd></label><div className="header-actions"><button title="Notifications"><Bell size={18}/><i>7</i></button><Button onClick={()=>setUpload(true)}><FileUp size={16}/>Ingest source</Button></div></header>
       <div className="mission-strip"><span><CircleDot size={14}/>Operational digital twin</span><span>Dataset <b>{records.length.toLocaleString()} parcels</b></span><span>CRS <b>EPSG:4326</b></span><span>Last sync <b>14 sec ago</b></span><button onClick={()=>{setLive(!live);flash(live?"Live synchronization paused.":"Live synchronization resumed.")}}><RefreshCw size={14}/>{live?"Live sync on":"Sync paused"}</button></div>
 
       {view==="command"&&<Command records={records} stats={stats} wardData={wardData} loading={loading} openReview={()=>setView("review")}/>}      
-      {view==="map"&&<Spatial records={filtered} selected={selected} setSelected={setSelected} status={status} setStatus={setStatus} zoom={zoom} setZoom={setZoom} setLayers={setLayers} approve={approve} flash={flash}/>}      
+      {view==="map"&&<Spatial records={filtered} selected={selected} setSelected={setSelected} selectMapParcel={selectMapParcel} status={status} setStatus={setStatus} setLayers={setLayers} approve={approve} flash={flash}/>}
       {(view==="registry"||view==="review")&&<Registry mode={view} rows={view==="review"?pageRows.filter(p=>p.status!=="verified"):pageRows} total={filtered.length} query={query} setQuery={x=>{setQuery(x);setPage(1)}} status={status} setStatus={x=>{setStatus(x);setPage(1)}} ward={ward} setWard={x=>{setWard(x);setPage(1)}} risk={risk} setRisk={x=>{setRisk(x);setPage(1)}} reset={reset} page={page} pages={pages} setPage={setPage} select={p=>{setSelected(p);setView("map")}} exportCSV={exportCSV}/>}      
       {view==="ingestion"&&<Ingestion open={()=>setUpload(true)}/>}      
       {view==="audit"&&<Audit/>}
@@ -83,9 +102,8 @@ function Command({records,stats,wardData,loading,openReview}:{records:Parcel[];s
   </div>
 }
 
-function Spatial({records,selected,setSelected,status,setStatus,zoom,setZoom,setLayers,approve,flash}:{records:Parcel[];selected:Parcel|null;setSelected:(p:Parcel|null)=>void;status:"all"|Status;setStatus:(s:"all"|Status)=>void;zoom:number;setZoom:(n:number)=>void;setLayers:(x:boolean)=>void;approve:(p:Parcel)=>void;flash:(m:string)=>void}){
-  const cells=records.slice(0,240);
-  return <div className="spatial-layout"><section className="map-zone"><div className="map-tools"><div className="segmented">{(["all","verified","review","conflict"] as const).map(s=><button key={s} className={status===s?"selected":""} onClick={()=>setStatus(s)}>{s==="all"?"All parcels":statusMeta[s].label}</button>)}</div><button onClick={()=>setLayers(true)}><Layers3 size={16}/>Layers</button><button><Grid3X3 size={16}/>Grid</button></div><LiveParcelMap records={records} selected={selected} onSelect={p=>setSelected(records.find(r=>r.parcelId===p.parcelId)??null)}/><footer><span>{records.length.toLocaleString()} matched parcels · Pan, zoom and click a boundary</span><span>EPSG:4326 · Synthetic demo data</span></footer></section>
+function Spatial({records,selected,setSelected,selectMapParcel,status,setStatus,setLayers,approve,flash}:{records:Parcel[];selected:Parcel|null;setSelected:(p:Parcel|null)=>void;selectMapParcel:(p:{parcelId:string})=>void;status:"all"|Status;setStatus:(s:"all"|Status)=>void;setLayers:(x:boolean)=>void;approve:(p:Parcel)=>void;flash:(m:string)=>void}){
+  return <div className="spatial-layout"><section className="map-zone"><div className="map-tools"><div className="segmented">{(["all","verified","review","conflict"] as const).map(s=><button key={s} className={status===s?"selected":""} onClick={()=>setStatus(s)}>{s==="all"?"All parcels":statusMeta[s].label}</button>)}</div><button onClick={()=>setLayers(true)}><Layers3 size={16}/>Layers</button><button><Grid3X3 size={16}/>Grid</button></div><LiveParcelMap records={records} selected={selected} onSelect={selectMapParcel}/><footer><span>{records.length.toLocaleString()} matched parcels · Pan, zoom and click a boundary</span><span>EPSG:4326 · Synthetic demo data</span></footer></section>
     <aside className="inspector">{selected?<><div className="inspector-head"><span className={`risk ${selected.risk}`}>{selected.risk.toUpperCase()} RISK</span><button onClick={()=>setSelected(null)}><X/></button><h3>Survey {selected.survey}</h3><p>{selected.parcelId} · ULPIN {selected.ulPin}</p></div><div className="score"><div><span>AI reconciliation confidence</span><b>{selected.confidence}%</b></div><Progress value={selected.confidence}/><small>{selected.confidence>=85?"Evidence aligns within approved tolerance.":"Human verification required before record update."}</small></div>{selected.issue!=="None"&&<div className="conflict-box"><AlertTriangle/><span><b>{selected.issue}</b><small>Detected across {selected.source}</small></span></div>}<dl><div><dt>Recorded owner</dt><dd>{selected.owner}</dd></div><div><dt>Recorded area (demo)</dt><dd>{selected.areaSqFt.toLocaleString()} sq.ft</dd></div><div><dt>Ward / zone</dt><dd>{selected.ward} / {selected.zone}</dd></div><div><dt>Evidence sources</dt><dd>{selected.source}</dd></div><div><dt>Property tax</dt><dd>{selected.taxStatus}</dd></div></dl><div className="parcel-detail"><h4>{statusMeta[selected.status].label}</h4><h4>Boundary coordinates (longitude, latitude)</h4><ol>{selected.boundary?.slice(0,-1).map((p,i)=><li key={i}>Corner {i+1}: {p[0].toFixed(6)}, {p[1].toFixed(6)}</li>)}</ol><h4>Parcel images</h4>{selected.images?.length?selected.images.map((src,i)=><img key={src} src={src} alt={`Parcel evidence ${i+1}`} style={{width:"100%"}}/>):<p>No parcel-specific field photos supplied. Use Satellite on the map for geographic imagery.</p>}<p>Boundary and recorded area are synthetic and may differ. Conflict and verification labels are demonstration data.</p></div><Tabs defaultValue="evidence"><TabsList><TabsTrigger value="evidence">Evidence</TabsTrigger><TabsTrigger value="lineage">Lineage</TabsTrigger></TabsList><TabsContent value="evidence"><div className="evidence"><span><FileCheck2/>Registry attributes<b>Matched</b></span><span><ScanLine/>Spatial geometry<b>{selected.status==="conflict"?"Conflict":"Aligned"}</b></span><span><Activity/>Freshness<b>{selected.lastUpdated}</b></span></div></TabsContent><TabsContent value="lineage"><p className="lineage">Imported → CRS normalized → attribute matched → spatial analysis → confidence scored.</p></TabsContent></Tabs>{selected.status!=="verified"&&<div className="decision"><Button variant="outline" onClick={()=>flash("GPS-tagged field verification assigned.")}>Field check</Button><Button onClick={()=>approve(selected)}><Check/>Approve</Button></div>}</>:<div className="empty-inspector"><Fingerprint/><h3>Parcel inspector</h3><p>Select a parcel to inspect evidence, geometry, risk and decision history.</p></div>}</aside>
   </div>
 }
