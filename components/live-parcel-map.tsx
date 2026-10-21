@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- map tiles require raw positioned images and external tile URLs */
 import {memo,useEffect,useMemo,useRef,useState} from 'react';
 import {LocateFixed,Minus,Plus} from 'lucide-react';
 export type MapParcel={parcelId:string;survey:string;status:'verified'|'review'|'conflict';boundary?:number[][]};
